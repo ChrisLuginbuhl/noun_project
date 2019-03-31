@@ -1,6 +1,7 @@
 
 #! python3
 # noun_project_dl.py - Downloads icons and their attributions from noun project.
+# must pass Category as argument
 # Chris Luginbuhl Mar 2019
 
 import json
@@ -11,35 +12,38 @@ from tqdm import tqdm
 import argparse
 from requests_oauthlib import OAuth1
 from PIL import Image
+from math import ceil
 import noun_project_config
 
-NUM_REQUESTS = 20      #How many times to request
-START_OFFSET = 50*80      # Offset for filename and for API request, skipping images already acquired
 URLS_PER_REQUEST = 50 # API returns up to 50 results.
-CATEGORY = 'sun'      # modify this according to the type of icon you want to get.
 auth = OAuth1(noun_project_config.api_key, noun_project_config.api_secret)
-endpoint = "https://api.thenounproject.com/icons/" + CATEGORY + "?limit=" + str(URLS_PER_REQUEST) + "&offset="
-
-lastBatchSize = 0
+lastBatchSize = 50
 error404counter = 0
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-i", "--infile", help="Path to json file from nounproject if not using API", default = None)
-parser.add_argument("-o", "--outpath", help="Path to folder of downloaded images (will be created if it doesn't exist)", default = None)
+parser.add_argument("-o", "--outpath", help="Path to folder of downloaded images (will be created if it doesn't exist), default = args.category", default = None)
 parser.add_argument("-s", "--finalsize", help="Size in pixels of resized images (square)", default = None, type=int)
+parser.add_argument("-c", "--category", help="Required: Noun Project icon category to download", default = None)
+parser.add_argument("-f", "--offset", help="Result number to start at. Skips previous icons.", default = 0, type=int)
+parser.add_argument("-n", "--numberRequested", help="number of images to acquire from Noun Project", type = int)
 args = parser.parse_args()
 
-print( "Infile {}, Output Path {}, Final Size {}".format(
+print( "Infile {}, Output Path {}, Final Size {}, Category {}, Offset {}, numRequested {}".format(
         args.infile,
         args.outpath,
         args.finalsize,
+        args.category,
+        args.offset,
+        args.numberRequested
         ))
 
+endpoint = "https://api.thenounproject.com/icons/" + args.category + "?limit=" + str(URLS_PER_REQUEST) + "&offset="
 if args.outpath == None:
-    outpath = CATEGORY
+    outpath = args.category
 else:
     outpath = args.outpath
+num_pages = int(ceil(args.numberRequested / URLS_PER_REQUEST)) #round up
 
 def get_json(offset):
     if args.infile != None:
@@ -89,7 +93,7 @@ def get_images(URLs, counter):
                 error404counter += 1
                 continue
             #save the file
-            path_and_name = os.path.join(outpath, CATEGORY + '_' + str(counter))
+            path_and_name = os.path.join(outpath, args.category + '_' + str(counter))
             imageFile = open(path_and_name + '.png', 'wb')
             for chunk in resp.iter_content(100000):
                 imageFile.write(chunk)
@@ -110,7 +114,7 @@ def png_to_jpg(filepath):
 #end png_to_jpg()
 
 def record_attribution(names_list):
-    attribFile = open(os.path.join(outpath, 'attribution_' + CATEGORY + '.txt'), 'a')  # append mode
+    attribFile = open(os.path.join(outpath, 'attribution_' + args.category + '.txt'), 'a')  # append mode
     for name in names_list:
         attribFile.write(name + '\n')
         #print(name)
@@ -118,14 +122,14 @@ def record_attribution(names_list):
 # end record_attribution()
 
 os.makedirs(outpath, exist_ok=True)                         # store imgs in subfolder
-for i in range(NUM_REQUESTS):
-    nouns_dict = get_json(START_OFFSET + i * URLS_PER_REQUEST)
+for i in range(num_pages):
+    nouns_dict = get_json(args.offset + i * URLS_PER_REQUEST)
     URL_values = extract_values(nouns_dict, 'preview_url')  #2nd parameter is the dictionary key that gives the URL
     names_list = extract_values(nouns_dict, 'attribution')
     print("Found ", len(URL_values), " URLs.")
-    get_images(URL_values, START_OFFSET + i * URLS_PER_REQUEST)
+    get_images(URL_values, args.offset + i * URLS_PER_REQUEST)
     record_attribution(names_list)
-    if ((args.infile == None) & (len(URL_values) != URLS_PER_REQUEST)):
+    if (args.infile == None) & (len(URL_values) < URLS_PER_REQUEST - 1): # sometimes only 49 urls are sent, but a much lower number means we're at the end of the category
         lastBatchSize = len(URL_values)
         break
-print("Got " + str((NUM_REQUESTS-1) * URLS_PER_REQUEST + lastBatchSize - error404counter) + " results, with " + str(error404counter) + "x 404 errors.")
+print("Got " + str(i * URLS_PER_REQUEST + lastBatchSize - error404counter) + " results, with " + str(error404counter) + " errors (e.g. 404).")
